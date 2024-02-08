@@ -4,14 +4,13 @@ class DBClient {
   constructor() {
     const host = process.env.DB_HOST || 'localhost';
     const port = process.env.DB_PORT || 27017;
-	  const database = process.env.DB_DATABASE || 'files_manager';
-	  this.client = new MongoClient(`mongodb:\/\/${host}:${port}`), { useNewUrlParser: true, useUnifiedTopology: true });
-  }
-	// Display errors in the console
+    const database = process.env.DB_DATABASE || 'files_manager';
+    this.client = new MongoClient(`mongodb://${host}:${port}`), { useNewUrlParser: true, useUnifiedTopology: true };
     this.client.on('error', (err) => {
       console.error(`MongoDB Client Error: ${err}`);
     });
-	 async isAlive() {
+  }
+  async isAlive() {
     // Check if the connection to MongoDB is successful
     try {
       await this.client.connect();
@@ -51,4 +50,3 @@ class DBClient {
 // Create and export an instance of DBClient
 const dbClient = new DBClient();
 module.exports = dbClient;
-}
