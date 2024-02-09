@@ -1,10 +1,11 @@
 import express from 'express';
 import routes from './routes';
+import bodyParser from 'body-parser';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Use routes from the 'routes' file
+app.use(bodyParser.json());
 app.use('/', routes);
 
 app.listen(PORT, () => {

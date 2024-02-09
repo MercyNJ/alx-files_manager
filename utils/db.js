@@ -1,4 +1,5 @@
 import { MongoClient } from 'mongodb';
+import sha1 from 'sha1';
 
 const DB_HOST = process.env.DB_HOST || 'localhost';
 const DB_PORT = process.env.DB_PORT || 27017;
@@ -32,6 +33,7 @@ class DBClient {
     const numberOfFiles = this.filesCollection.countDocuments();
     return numberOfFiles;
   }
+
   /*async getUserByEmail(email) {
     try {
       await this.client.connect();
@@ -55,6 +57,7 @@ class DBClient {
       throw error;
     }
   }*/
+
 }
 
 const dbClient = new DBClient();
