@@ -166,6 +166,96 @@ const FilesController = {
       res.status(500).json({ error: 'Internal Server Error' });
     }
   },
+  putPublish: async (req, res) => {
+    try {
+      const { 'x-token': token } = req.headers;
+      const { id } = req.params;
+
+      // Check if token is provided
+      if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Retrieve user based on token
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Validate if the user exists in the database
+      const user = await dbClient.usersCollection.findOne({ _id: ObjectId(userId) });
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Validate if the file exists and is linked to the user
+      const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id), userId: ObjectId(userId) });
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      // Update the value of isPublic to true
+      const updatedFile = await dbClient.filesCollection.findOneAndUpdate(
+        { _id: ObjectId(id), userId: ObjectId(userId) },
+        { $set: { isPublic: true } },
+        { returnDocument: 'after' }
+      );
+
+      const { localPath, ...fileWithoutPath } = updatedFile.value;
+
+      // Return the updated file document
+      return res.status(200).json(fileWithoutPath);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  },
+
+  // New endpoint to unpublish a file
+  putUnpublish: async (req, res) => {
+    try {
+      const { 'x-token': token } = req.headers;
+      const { id } = req.params;
+
+      // Check if token is provided
+      if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Retrieve user based on token
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Validate if the user exists in the database
+      const user = await dbClient.usersCollection.findOne({ _id: ObjectId(userId) });
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Validate if the file exists and is linked to the user
+      const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id), userId: ObjectId(userId) });
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      // Update the value of isPublic to false
+      const updatedFile = await dbClient.filesCollection.findOneAndUpdate(
+        { _id: ObjectId(id), userId: ObjectId(userId) },
+        { $set: { isPublic: false } },
+        { returnDocument: 'after' }
+      );
+
+      const { localPath, ...fileWithoutPath } = updatedFile.value;
+
+      // Return the updated file document
+      return res.status(200).json(fileWithoutPath);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
 };
 
 export default FilesController;
