@@ -1,8 +1,8 @@
-import dbClient from '../utils/db';
 import { v4 as uuidv4 } from 'uuid';
-import redisClient from '../utils/redis';
 import sha1 from 'sha1';
 import { ObjectId } from 'mongodb';
+import redisClient from '../utils/redis';
+import dbClient from '../utils/db';
 
 const AuthController = {
   getConnect: async (req, res) => {
@@ -53,7 +53,7 @@ const AuthController = {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
-  }
+  },
 };
 
 export default AuthController;

@@ -1,14 +1,16 @@
-import dbClient from '../utils/db';
-import redisClient from '../utils/redis';
 import { ObjectId } from 'mongodb';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import redisClient from '../utils/redis';
+import dbClient from '../utils/db';
 
 const FilesController = {
   postUpload: async (req, res) => {
     try {
       const { 'x-token': token } = req.headers;
-      const { name, type, parentId = '0', isPublic = false, data } = req.body;
+      const {
+        name, type, parentId = '0', isPublic = false, data,
+      } = req.body;
 
       if (!token) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -65,64 +67,62 @@ const FilesController = {
         const insertedFile = await dbClient.filesCollection.insertOne(newFile);
         const { _id, ...file } = insertedFile.ops[0];
         return res.status(201).json({ id: _id.toString(), ...file });
-      } else {
-        const filePath = `${folderPath}/${uuidv4()}`;
-        fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
-
-        newFile.localPath = filePath;
-        const insertedFile = await dbClient.filesCollection.insertOne(newFile);
-        const { _id, localPath, ...file } = insertedFile.ops[0];
-        return res.status(201).json({ id: _id.toString(), ...file });
       }
+      const filePath = `${folderPath}/${uuidv4()}`;
+      fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
+
+      newFile.localPath = filePath;
+      const insertedFile = await dbClient.filesCollection.insertOne(newFile);
+      const { _id, localPath, ...file } = insertedFile.ops[0];
+      return res.status(201).json({ id: _id.toString(), ...file });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
   },
   getShow: async (req, res) => {
-  try {
-    const { 'x-token': token } = req.headers;
-    const { id } = req.params;
+    try {
+      const { 'x-token': token } = req.headers;
+      const { id } = req.params;
 
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+      if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-    const userId = await redisClient.get(`auth_${token}`);
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid ID format' });
-    }
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+      }
 
-    const file = await dbClient.filesCollection.aggregate([
-      { $match: { _id: ObjectId(id), userId: ObjectId(userId) } },
-      {
-        $project: {
-          _id: 0,
-          id: '$_id',
-          userId: 1,
-          name: 1,
-          type: 1,
-          isPublic: 1,
-          parentId: { $toInt: "$parentId" },
+      const file = await dbClient.filesCollection.aggregate([
+        { $match: { _id: ObjectId(id), userId: ObjectId(userId) } },
+        {
+          $project: {
+            _id: 0,
+            id: '$_id',
+            userId: 1,
+            name: 1,
+            type: 1,
+            isPublic: 1,
+            parentId: { $toInt: '$parentId' },
+          },
         },
-      },
-    ]).toArray();
+      ]).toArray();
 
-    if (!file || file.length === 0) {
-      return res.status(404).json({ error: 'Not found' });
+      if (!file || file.length === 0) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      return res.json(file[0]);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Internal Server Error' });
     }
-
-    return res.json(file[0]);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-},
-
+  },
 
   // New endpoint to retrieve all user's file documents with pagination
   getIndex: async (req, res) => {
@@ -144,7 +144,7 @@ const FilesController = {
 
       // Implement MongoDB aggregation for pagination
       const files = await dbClient.filesCollection.aggregate([
-        { $match: { userId: ObjectId(userId), parentId: parentId } },
+        { $match: { userId: ObjectId(userId), parentId } },
         { $skip: page * 20 },
         { $limit: 20 },
         {
@@ -155,9 +155,9 @@ const FilesController = {
             name: 1,
             type: 1,
             isPublic: 1,
-            parentId: { $cond: { if: { $eq: ["$parentId", "0"] }, then: 0, else: "$parentId" } },
-          }
-        }
+            parentId: { $cond: { if: { $eq: ['$parentId', '0'] }, then: 0, else: '$parentId' } },
+          },
+        },
       ]).toArray();
 
       return res.json(files);
@@ -165,7 +165,7 @@ const FilesController = {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
-  }
+  },
 };
 
 export default FilesController;

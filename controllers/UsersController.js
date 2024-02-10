@@ -1,8 +1,7 @@
-import dbClient from '../utils/db';
-import redisClient from '../utils/redis';
 import sha1 from 'sha1';
 import { ObjectId } from 'mongodb';
-
+import dbClient from '../utils/db';
+import redisClient from '../utils/redis';
 
 const UsersController = {
   postNew: async (req, res) => {
@@ -25,7 +24,7 @@ const UsersController = {
 
       const newUser = await dbClient.usersCollection.insertOne({
         email,
-        password: hashedPassword
+        password: hashedPassword,
       });
 
       res.status(201).json({ id: newUser.insertedId, email });
@@ -56,7 +55,7 @@ const UsersController = {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
-  }
+  },
 };
 
 export default UsersController;
