@@ -1,5 +1,7 @@
 import { ObjectId } from 'mongodb';
 import fs from 'fs';
+import mime from 'mime-types';
+
 import { v4 as uuidv4 } from 'uuid';
 import redisClient from '../utils/redis';
 import dbClient from '../utils/db';
@@ -188,13 +190,11 @@ const FilesController = {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Validate if the file exists and is linked to the user
       const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id), userId: ObjectId(userId) });
       if (!file) {
         return res.status(404).json({ error: 'Not found' });
       }
 
-      // Update the value of isPublic to true
       const updatedFile = await dbClient.filesCollection.findOneAndUpdate(
         { _id: ObjectId(id), userId: ObjectId(userId) },
         { $set: { isPublic: true } },
@@ -203,7 +203,6 @@ const FilesController = {
 
       const { localPath, ...fileWithoutPath } = updatedFile.value;
 
-      // Return the updated file document
       return res.status(200).json(fileWithoutPath);
     } catch (error) {
       console.error(error);
@@ -217,30 +216,25 @@ const FilesController = {
       const { 'x-token': token } = req.headers;
       const { id } = req.params;
 
-      // Check if token is provided
       if (!token) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Retrieve user based on token
       const userId = await redisClient.get(`auth_${token}`);
       if (!userId) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Validate if the user exists in the database
       const user = await dbClient.usersCollection.findOne({ _id: ObjectId(userId) });
       if (!user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Validate if the file exists and is linked to the user
       const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id), userId: ObjectId(userId) });
       if (!file) {
         return res.status(404).json({ error: 'Not found' });
       }
 
-      // Update the value of isPublic to false
       const updatedFile = await dbClient.filesCollection.findOneAndUpdate(
         { _id: ObjectId(id), userId: ObjectId(userId) },
         { $set: { isPublic: false } },
@@ -249,13 +243,51 @@ const FilesController = {
 
       const { localPath, ...fileWithoutPath } = updatedFile.value;
 
-      // Return the updated file document
       return res.status(200).json(fileWithoutPath);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
+  },
+
+  getFile: async (req, res) => {
+    try {
+      const { 'x-token': token } = req.headers;
+      const { id } = req.params;
+
+      const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id) });
+
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      if (!file.isPublic && !token) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      if (!file.isPublic && token && file.userId.toString() !== (await redisClient.get(`auth_${token}`))) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      if (file.type === 'folder') {
+        return res.status(400).json({ error: "A folder doesn't have content" });
+      }
+
+      if (!fs.existsSync(file.localPath)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      const mimeType = mime.lookup(file.name);
+
+      const fileContent = fs.readFileSync(file.localPath, 'utf8');
+      res.setHeader('Content-Type', mimeType);
+      return res.send(fileContent);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   }
+
 };
 
 export default FilesController;
