@@ -6,6 +6,12 @@ import { v4 as uuidv4 } from 'uuid';
 import redisClient from '../utils/redis';
 import dbClient from '../utils/db';
 
+import Queue from 'bull'; // Import Bull library
+import imageThumbnail from 'image-thumbnail'; // Import image-thumbnail library
+
+// Create Bull queue for processing thumbnail generation jobs
+const fileQueue = new Queue('fileQueue');
+
 const FilesController = {
   postUpload: async (req, res) => {
     try {
@@ -76,12 +82,17 @@ const FilesController = {
       newFile.localPath = filePath;
       const insertedFile = await dbClient.filesCollection.insertOne(newFile);
       const { _id, localPath, ...file } = insertedFile.ops[0];
+
+      // Add job to fileQueue for generating thumbnails
+      await fileQueue.add('generateThumbnails', { userId, fileId: _id });
+
       return res.status(201).json({ id: _id.toString(), ...file });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Internal Server Error' });
     }
   },
+
   getShow: async (req, res) => {
     try {
       const { 'x-token': token } = req.headers;
@@ -110,7 +121,7 @@ const FilesController = {
             name: 1,
             type: 1,
             isPublic: 1,
-            parentId: { $toInt: '$parentId' },
+            parentId: { $cond: { if: { $eq: ['$parentId', '0'] }, then: 0, else: '$parentId' } },
           },
         },
       ]).toArray();
@@ -251,42 +262,63 @@ const FilesController = {
   },
 
   getFile: async (req, res) => {
-    try {
-      const { 'x-token': token } = req.headers;
-      const { id } = req.params;
+  try {
+    const { 'x-token': token } = req.headers;
+    const { id } = req.params;
+    const { size } = req.query;
 
-      const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id) });
+    const file = await dbClient.filesCollection.findOne({ _id: ObjectId(id) });
 
-      if (!file) {
-        return res.status(404).json({ error: 'Not found' });
-      }
-
-      if (!file.isPublic && !token) {
-        return res.status(404).json({ error: 'Not found' });
-      }
-
-      if (!file.isPublic && token && file.userId.toString() !== (await redisClient.get(`auth_${token}`))) {
-        return res.status(404).json({ error: 'Not found' });
-      }
-
-      if (file.type === 'folder') {
-        return res.status(400).json({ error: "A folder doesn't have content" });
-      }
-
-      if (!fs.existsSync(file.localPath)) {
-        return res.status(404).json({ error: 'Not found' });
-      }
-
-      const mimeType = mime.lookup(file.name);
-
-      const fileContent = fs.readFileSync(file.localPath, 'utf8');
-      res.setHeader('Content-Type', mimeType);
-      return res.send(fileContent);
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: 'Internal Server Error' });
+    if (!file) {
+      return res.status(404).json({ error: 'Not found' });
     }
+
+    if (!file.isPublic && !token) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    if (!file.isPublic && token && file.userId.toString() !== (await redisClient.get(`auth_${token}`))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    if (file.type === 'folder') {
+      return res.status(400).json({ error: "A folder doesn't have content" });
+    }
+
+    if (!fs.existsSync(file.localPath)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    if (size && !['500', '250', '100'].includes(size)) {
+      return res.status(400).json({ error: 'Invalid size parameter. Size can be 500, 250, or 100.' });
+    }
+
+    let filePath = file.localPath;
+
+     if (size) {
+      const validSizes = ['500', '250', '100'];
+      
+      if (validSizes.includes(size)) {
+        filePath += `_${size}`;
+      } else {
+        return res.status(400).json({ error: 'Invalid size parameter. Size can be 500, 250, or 100.' });
+      }
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+
+    const fileContent = fs.readFileSync(filePath);
+    const mimeType = mime.contentType(file.name);
+    res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+    return res.send(fileContent);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
+}
 
 };
 
