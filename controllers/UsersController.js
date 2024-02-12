@@ -2,6 +2,9 @@ import sha1 from 'sha1';
 import { ObjectId } from 'mongodb';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
+import Queue from 'bull';
+
+const userQueue = new Queue('userQueue');
 
 const UsersController = {
   postNew: async (req, res) => {
@@ -26,6 +29,9 @@ const UsersController = {
         email,
         password: hashedPassword,
       });
+
+      // Add a job to the userQueue with the userId
+      await userQueue.add('sendWelcomeEmail', { userId: newUser.insertedId });
 
       res.status(201).json({ id: newUser.insertedId, email });
     } catch (error) {
