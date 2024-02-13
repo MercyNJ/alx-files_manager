@@ -1,8 +1,9 @@
+/* eslint-disable consistent-return */
 import sha1 from 'sha1';
 import { ObjectId } from 'mongodb';
+import Queue from 'bull';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
-import Queue from 'bull';
 
 const userQueue = new Queue('userQueue');
 
