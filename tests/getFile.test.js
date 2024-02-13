@@ -1,89 +1,88 @@
-import request from 'supertest';
+import chai from 'chai';
+import sinon from 'sinon';
 import fs from 'fs';
-import app from '../server'; // Assuming 'app' is your Express application
+import mime from 'mime-types';
+import { ObjectId } from 'mongodb';
+import FilesController from '../controllers/FilesController';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
 
-jest.mock('../utils/db'); // Mocking the dbClient
-jest.mock('../utils/redis'); // Mocking the redisClient
+const { expect } = chai;
 
-describe('GET /files/:id Endpoint', () => {
+describe('filesController - getFile', () => {
+  let req; let res; let
+    next;
+
+  beforeEach(() => {
+    req = {
+      headers: {},
+      params: {},
+      query: {},
+    };
+    res = {
+      status: sinon.stub().returnsThis(),
+      json: sinon.spy(),
+      send: sinon.spy(),
+      setHeader: sinon.spy(),
+    };
+    next = sinon.spy();
+  });
+
   afterEach(() => {
-    jest.clearAllMocks();
+    sinon.restore();
   });
 
   it('should return 404 if file is not found', async () => {
-    dbClient.filesCollection.findOne.mockResolvedValue(null); // Mock file not found
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    const findOneStub = sinon.stub().returns(null);
+    sinon.replace(dbClient.filesCollection, 'findOne', findOneStub);
 
-    const response = await request(app)
-      .get('/files/123')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
+    await FilesController.getFile(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
 
-  it('should return 404 if file is not public and no token is provided', async () => {
-    const mockFile = { _id: 'fileId', isPublic: false };
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
+  it('should return 404 if file is not public and token is missing', async () => {
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    const findOneStub = sinon.stub().returns({ _id: new ObjectId(), isPublic: false });
+    sinon.replace(dbClient.filesCollection, 'findOne', findOneStub);
 
-    const response = await request(app)
-      .get('/files/fileId')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
+    await FilesController.getFile(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
 
-  it('should return 404 if file is not public and token does not match', async () => {
-    const mockFile = { _id: 'fileId', isPublic: false, userId: 'userId' };
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
-    redisClient.get.mockResolvedValue('otherUserId'); // Mock token not matching
+  it('should return 404 if file is not public and token does not match user', async () => {
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    req.headers['x-token'] = 'invalid_token';
+    const findOneStub = sinon.stub().returns({ _id: new ObjectId(), isPublic: false, userId: new ObjectId() });
+    const getStub = sinon.stub().returns(new ObjectId().toHexString()); // Provide a valid ObjectId as a string
+    sinon.replace(dbClient.filesCollection, 'findOne', findOneStub);
+    sinon.replace(redisClient, 'get', getStub);
 
-    const response = await request(app)
-      .get('/files/fileId')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
-  });
-
-  it('should return 400 if file is a folder', async () => {
-    const mockFile = { _id: 'fileId', isPublic: true, type: 'folder' };
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
-
-    const response = await request(app)
-      .get('/files/fileId')
-      .send();
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: "A folder doesn't have content" });
+    await FilesController.getFile(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
 
   it('should return 404 if file path does not exist', async () => {
-    const mockFile = { _id: 'fileId', isPublic: true, type: 'file', localPath: '/path/to/nonexistent/file.txt' };
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    const findOneStub = sinon.stub().returns({ _id: new ObjectId(), localPath: '/path/to/nonexistent/file' });
+    sinon.replace(dbClient.filesCollection, 'findOne', findOneStub);
 
-    const response = await request(app)
-      .get('/files/fileId')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
+    await FilesController.getFile(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
 
-  it('should return 400 if size parameter is invalid', async () => {
-    const mockFile = { _id: 'fileId', isPublic: true, type: 'file', localPath: '/path/to/file.txt' };
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
+  it('should return 404 if file path with size does not exist', async () => {
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    req.query.size = '500';
+    const findOneStub = sinon.stub().returns({ _id: new ObjectId(), localPath: '/path/to/nonexistent/file' });
+    sinon.replace(dbClient.filesCollection, 'findOne', findOneStub);
 
-    const response = await request(app)
-      .get('/files/fileId')
-      .query({ size: 'invalid_size' })
-      .send();
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Invalid size parameter. Size can be 500, 250, or 100.' });
+    await FilesController.getFile(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
-
 });

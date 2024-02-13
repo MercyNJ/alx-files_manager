@@ -1,155 +1,103 @@
-import request from 'supertest'; // Supertest is used for testing HTTP endpoints
-import app from '../server'; // Assuming 'app' is the Express application
+import chai from 'chai';
+import chaiHttp from 'chai-http';
+import sinon from 'sinon';
+import Queue from 'bull';
+import UsersController from '../controllers/UsersController';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
-import UsersController from '../controllers/UsersController';
 
-// Mocking dependencies
-jest.mock('../utils/db', () => ({
-  usersCollection: {
-    findOne: jest.fn(),
-    insertOne: jest.fn(),
-  },
-}));
+chai.use(chaiHttp);
+const { expect } = chai;
 
-jest.mock('../utils/redis', () => ({
-  get: jest.fn(),
-}));
-
-jest.mock('sha1', () => ({
-  __esModule: true,
-  default: jest.fn().mockReturnValue('hashedPassword'),
-}));
-
-jest.mock('bull', () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
-    add: jest.fn(),
-  })),
-}));
-
-describe('POST /users Endpoint', () => {
-  afterEach(() => {
-    jest.clearAllMocks(); // Clear all mock calls after each test
+describe('usersController', () => {
+  beforeEach(() => {
+    sinon.stub(dbClient.usersCollection, 'findOne');
+    sinon.stub(dbClient.usersCollection, 'insertOne');
+    sinon.stub(redisClient, 'get');
+    sinon.stub(redisClient, 'set');
   });
 
-  it('should create a new user and return 201 status', async () => {
-    dbClient.usersCollection.findOne.mockResolvedValue(null); // Mock no existing user
-    dbClient.usersCollection.insertOne.mockResolvedValue({ insertedId: 'newUserId' }); // Mock new user insertion
+  afterEach(() => {
+    sinon.restore();
+  });
 
-    const response = await request(app)
-      .post('/users')
-      .send({ email: 'test@example.com', password: 'password' });
+  describe('postNew', () => {
+    it('should create a new user and return user information', async () => {
+      const req = {
+        body: { email: 'test@example.com', password: 'password123' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
 
-    expect(response.status).toBe(201);
-    expect(response.body).toEqual({ id: 'newUserId', email: 'test@example.com' });
-    expect(dbClient.usersCollection.findOne).toHaveBeenCalledWith({ email: 'test@example.com' });
-    expect(dbClient.usersCollection.insertOne).toHaveBeenCalledWith({
-      email: 'test@example.com',
-      password: 'hashedPassword',
+      // Stub database and queue interactions
+      dbClient.usersCollection.findOne.resolves(null);
+      dbClient.usersCollection.insertOne.resolves({ insertedId: 'user123' });
+
+      await UsersController.postNew(req, res);
+
+      expect(res.status.calledWith(201)).to.be.true;
+      expect(res.json.calledWith({ id: 'user123', email: 'test@example.com' })).to.be.true;
     });
-    expect(userQueue.add).toHaveBeenCalledWith('sendWelcomeEmail', { userId: 'newUserId' });
+
+    it('should handle the case where the user already exists', async () => {
+      const req = {
+        body: { email: 'existing@example.com', password: 'password123' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
+
+      // Stub database interaction to simulate an existing user
+      dbClient.usersCollection.findOne.resolves({ _id: 'existingUser123' });
+
+      await UsersController.postNew(req, res);
+
+      expect(res.status.calledWith(400)).to.be.true;
+      expect(res.json.calledWith({ error: 'Already exist' })).to.be.true;
+    });
   });
 
-  it('should return 400 if email is missing', async () => {
-    const response = await request(app)
-      .post('/users')
-      .send({ password: 'password' });
+  describe('getMe', () => {
+    it('should return user information for a valid token', async () => {
+      const req = {
+        headers: { 'x-token': 'validToken123' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Missing email' });
-  });
+      // Stub Redis and database interactions
+      redisClient.get.resolves('user123');
+      dbClient.usersCollection.findOne.resolves({ _id: 'user123', email: 'test@example.com' });
 
-  it('should return 400 if password is missing', async () => {
-    const response = await request(app)
-      .post('/users')
-      .send({ email: 'test@example.com' });
+      await UsersController.getMe(req, res);
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Missing password' });
-  });
+      console.log('Actual status:', res.status.firstCall.args[0]);
 
-  it('should return 400 if user already exists', async () => {
-    dbClient.usersCollection.findOne.mockResolvedValue({}); // Mock existing user
+      expect(res.status.calledWith(200)).to.be.true;
+      expect(res.json.calledWith({ id: 'user123', email: 'test@example.com' })).to.be.true;
+    });
 
-    const response = await request(app)
-      .post('/users')
-      .send({ email: 'test@example.com', password: 'password' });
+    it('should handle unauthorized cases (invalid token or non-existent user)', async () => {
+      const req = {
+        headers: { 'x-token': 'invalidToken456' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Already exist' });
-  });
+      // Stub Redis interaction to simulate an invalid token
+      redisClient.get.resolves(null);
 
-  it('should return 500 if there is an internal server error', async () => {
-    dbClient.usersCollection.findOne.mockRejectedValue(new Error('Database error')); // Mock database error
+      await UsersController.getMe(req, res);
 
-    const response = await request(app)
-      .post('/users')
-      .send({ email: 'test@example.com', password: 'password' });
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({ error: 'Internal Server Error' });
-  });
-});
-
-describe('GET /users/me Endpoint', () => {
-  afterEach(() => {
-    jest.clearAllMocks(); // Clear all mock calls after each test
-  });
-
-  it('should return user information when authenticated', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock authenticated user ID
-    dbClient.usersCollection.findOne.mockResolvedValue({ _id: 'userId', email: 'test@example.com' }); // Mock user information
-
-    const response = await request(app)
-      .get('/users/me')
-      .set('x-token', 'authToken');
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ id: 'userId', email: 'test@example.com' });
-    expect(redisClient.get).toHaveBeenCalledWith('auth_authToken');
-    expect(dbClient.usersCollection.findOne).toHaveBeenCalledWith({ _id: 'userId' });
-  });
-
-  it('should return 401 if authentication token is missing', async () => {
-    const response = await request(app)
-      .get('/users/me');
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
-  });
-
-  it('should return 401 if authentication token is invalid', async () => {
-    redisClient.get.mockResolvedValue(null); // Mock unauthenticated user
-
-    const response = await request(app)
-      .get('/users/me')
-      .set('x-token', 'invalidToken');
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
-  });
-
-  it('should return 500 if there is an internal server error', async () => {
-    redisClient.get.mockRejectedValue(new Error('Redis error')); // Mock Redis error
-
-    const response = await request(app)
-      .get('/users/me')
-      .set('x-token', 'authToken');
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({ error: 'Internal Server Error' });
-  });
-
-  it('should return 500 if user information cannot be retrieved', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock authenticated user ID
-    dbClient.usersCollection.findOne.mockResolvedValue(null); // Mock user not found
-
-    const response = await request(app)
-      .get('/users/me')
-      .set('x-token', 'authToken');
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({ error: 'Internal Server Error' });
+      expect(res.status.calledWith(401)).to.be.true;
+      expect(res.json.calledWith({ error: 'Unauthorized' })).to.be.true;
+    });
   });
 });

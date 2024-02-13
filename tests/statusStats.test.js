@@ -1,50 +1,74 @@
-import {
-  expect, use, should, request,
-} from 'chai';
+import chai from 'chai';
+import sinon from 'sinon';
 import chaiHttp from 'chai-http';
-import app from '../server';
+import AppController from '../controllers/AppController';
 import dbClient from '../utils/db';
+import redisClient from '../utils/redis';
+import { app } from '../server';
 
-use(chaiHttp);
-should();
+chai.use(chaiHttp);
+const { expect } = chai;
 
-// General APP Endpoints ==============================================
+describe('appController', () => {
+  beforeEach(() => {
+    sinon.stub(redisClient, 'isAlive');
+    sinon.stub(dbClient, 'isAlive');
+  });
 
-describe('testing App Status Endpoints', () => {
-  describe('gET /status', () => {
-    it('returns the status of redis and mongo connection', async () => {
-      const response = await request(app).get('/status').send();
-      const body = JSON.parse(response.text);
+  afterEach(() => {
+    redisClient.isAlive.restore();
+    dbClient.isAlive.restore();
+  });
 
-      expect(body).to.eql({ redis: true, db: true });
-      expect(response.statusCode).to.equal(200);
+  describe('getStatus', () => {
+    it('should return 200 with both Redis and DB alive', async () => {
+      redisClient.isAlive.resolves(true);
+      dbClient.isAlive.resolves(true);
+
+      const res = await chai.request(AppController).get('/status');
+
+      expect(res).to.have.status(200);
+      expect(res.body).to.deep.equal({ redis: true, db: true });
+    });
+
+    it('should return 500 with Redis or DB not alive', async () => {
+      redisClient.isAlive.resolves(false);
+      dbClient.isAlive.resolves(true);
+
+      const res = await chai.request(AppController).get('/status');
+
+      expect(res).to.have.status(500);
+      expect(res.body).to.deep.equal({ redis: false, db: true });
     });
   });
 
-  describe('gET /stats', () => {
-    before(async () => {
-      await dbClient.usersCollection.deleteMany({});
-      await dbClient.filesCollection.deleteMany({});
+  describe('getStats', () => {
+    beforeEach(() => {
+      sinon.stub(dbClient, 'nbUsers').resolves(10);
+      sinon.stub(dbClient, 'nbFiles').resolves(20);
     });
 
-    it('returns number of users and files in db 0 for this one', async () => {
-      const response = await request(app).get('/stats').send();
-      const body = JSON.parse(response.text);
-
-      expect(body).to.eql({ users: 0, files: 0 });
-      expect(response.statusCode).to.equal(200);
+    afterEach(() => {
+      dbClient.nbUsers.restore();
+      dbClient.nbFiles.restore();
     });
 
-    it('returns number of users and files in db 1 and 2 for this one', async () => {
-      await dbClient.usersCollection.insertOne({ name: 'Larry' });
-      await dbClient.filesCollection.insertOne({ name: 'image.png' });
-      await dbClient.filesCollection.insertOne({ name: 'file.txt' });
+    it('should return 200 with user and file counts', async () => {
+      const res = await chai.request(AppController).get('/stats');
 
-      const response = await request(app).get('/stats').send();
-      const body = JSON.parse(response.text);
+      expect(res).to.have.status(200);
+      expect(res.body).to.deep.equal({ users: 10, files: 20 });
+    });
 
-      expect(body).to.eql({ users: 1, files: 2 });
-      expect(response.statusCode).to.equal(200);
+    it('should return 500 on error', async () => {
+      sinon.stub(dbClient, 'nbUsers').rejects(new Error('Fake error'));
+
+      const res = await chai.request(AppController).get('/stats');
+
+      expect(res).to.have.status(500);
+      expect(res.body).to.deep.equal({ error: 'Internal Server Error' });
+
+      dbClient.nbUsers.restore();
     });
   });
 });

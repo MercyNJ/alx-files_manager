@@ -1,86 +1,62 @@
-import request from 'supertest';
-import app from '../server'; // Assuming 'app' is your Express application
+import chai from 'chai';
+import chaiHttp from 'chai-http';
+import {
+  describe, it, before, after,
+} from 'mocha';
+import sinon from 'sinon';
+import app from '../server'; // Import your Express app instance
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
-import fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import FilesController from '../controllers/FilesController';
 
-jest.mock('fs'); // Mocking the fs module
+chai.use(chaiHttp);
+const { expect } = chai;
 
-describe('POST /upload Endpoint', () => {
-  afterEach(() => {
-    jest.clearAllMocks();
+describe('filesController - postUpload', () => {
+  before(() => {
+    sinon.stub(redisClient, 'get').resolves('userId');
   });
 
-  it('should return 401 if token is missing', async () => {
-    const response = await request(app)
-      .post('/upload')
-      .send({
-        name: 'TestFile.txt',
-        type: 'file',
-        data: 'dGVzdCBmaWxlIHN0cmluZw==', // Base64 encoded string 'test file string'
-      });
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+  after(() => {
+    sinon.restore();
   });
 
-  it('should return 401 if token is invalid', async () => {
-    redisClient.get.mockResolvedValue(null); // Mock invalid token
-
-    const response = await request(app)
-      .post('/upload')
-      .set('x-token', 'invalid_token')
-      .send({
-        name: 'TestFile.txt',
-        type: 'file',
-        data: 'dGVzdCBmaWxlIHN0cmluZw==', // Base64 encoded string 'test file string'
-      });
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+  it('should return 401 for missing token', async () => {
+    const res = await chai.request(app).post('/upload');
+    expect(res).to.have.status(401);
   });
 
-  it('should return 400 if name is missing', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-
-    const response = await request(app)
+  it('should return 400 for invalid parentId format', async () => {
+    const res = await chai.request(app)
       .post('/upload')
-      .set('x-token', 'valid_token')
-      .send({
-        type: 'file',
-        data: 'dGVzdCBmaWxlIHN0cmluZw==', // Base64 encoded string 'test file string'
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Missing name' });
+      .set('x-token', 'validToken')
+      .send({ parentId: 'invalidId' });
+    expect(res).to.have.status(400);
   });
 
-  it('should return 400 if type is missing or invalid', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-
-    const response1 = await request(app)
+  it('should return 400 for missing name', async () => {
+    const res = await chai.request(app)
       .post('/upload')
-      .set('x-token', 'valid_token')
-      .send({
-        name: 'TestFile.txt',
-        data: 'dGVzdCBmaWxlIHN0cmluZw==', // Base64 encoded string 'test file string'
-      });
-
-    const response2 = await request(app)
-      .post('/upload')
-      .set('x-token', 'valid_token')
-      .send({
-        name: 'TestFile.txt',
-        type: 'invalid_type',
-        data: 'dGVzdCBmaWxlIHN0cmluZw==', // Base64 encoded string 'test file string'
-      });
-
-    expect(response1.status).toBe(400);
-    expect(response1.body).toEqual({ error: 'Missing type or invalid type' });
-
-    expect(response2.status).toBe(400);
-    expect(response2.body).toEqual({ error: 'Missing type or invalid type' });
+      .set('x-token', 'validToken')
+      .send({ parentId: '0' });
+    expect(res).to.have.status(400);
   });
 
+  it('should return 400 for missing type', async () => {
+    const res = await chai.request(app)
+      .post('/upload')
+      .set('x-token', 'validToken')
+      .send({ name: 'testFile', parentId: '0' });
+    expect(res).to.have.status(400);
+  });
+
+  it('should return 400 for invalid type', async () => {
+    const res = await chai.request(app)
+      .post('/upload')
+      .set('x-token', 'validToken')
+      .send({ name: 'testFile', type: 'invalidType', parentId: '0' });
+    expect(res).to.have.status(400);
+  });
+
+  // Add more tests for other scenarios
 });

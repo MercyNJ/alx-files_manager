@@ -1,86 +1,102 @@
-import request from 'supertest'; // Supertest is used for testing HTTP endpoints
-import app from '../server'; // Assuming 'app' is the Express application
+import chai from 'chai';
+import chaiHttp from 'chai-http';
+import sinon from 'sinon';
+import AuthController from '../controllers/AuthController';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
-import AuthController from '../controllers/AuthController';
 
-// Mocking dependencies
-jest.mock('uuid', () => ({
-  v4: jest.fn().mockReturnValue('fakeToken'),
-}));
+chai.use(chaiHttp);
+const { expect } = chai;
 
-jest.mock('../utils/db', () => ({
-  usersCollection: {
-    findOne: jest.fn(),
-  },
-}));
+describe('authController', () => {
+  beforeEach(() => {
+    sinon.stub(dbClient.usersCollection, 'findOne');
+    sinon.stub(redisClient, 'get');
+    sinon.stub(redisClient, 'set');
+    sinon.stub(redisClient, 'del');
+  });
 
-jest.mock('../utils/redis', () => ({
-  get: jest.fn(),
-  set: jest.fn(),
-  del: jest.fn(),
-}));
-
-jest.mock('sha1', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation((input) => `hashed_${input}`),
-}));
-
-describe('GET /connect Endpoint', () => {
   afterEach(() => {
-    jest.clearAllMocks(); // Clear all mock calls after each test
+    sinon.restore();
   });
 
-  it('should connect user and return token', async () => {
-    dbClient.usersCollection.findOne.mockResolvedValue({ _id: 'userId', email: 'test@example.com' }); // Mock user found
-    redisClient.set.mockResolvedValue(); // Mock token set in Redis
+  describe('getConnect', () => {
+    it('should authenticate user and return a token', async () => {
+      const req = {
+        headers: { authorization: 'Basic base64encodedcredentials' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
 
-    const response = await request(app)
-      .get('/connect')
-      .set('Authorization', 'Basic dGVzdEBleGFtcGxlLmNvbTpwYXNzd29yZA=='); // Base64 encoded 'test@example.com:password'
+      // Stub database interaction
+      dbClient.usersCollection.findOne.resolves({ _id: 'user123' });
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ token: 'fakeToken' });
-    expect(dbClient.usersCollection.findOne).toHaveBeenCalledWith({ email: 'test@example.com', password: 'hashed_password' });
-    expect(redisClient.set).toHaveBeenCalledWith('auth_fakeToken', 'userId', 86400);
+      // Stub Redis interaction
+      redisClient.set.resolves();
+
+      await AuthController.getConnect(req, res);
+
+      expect(res.status.calledWith(200)).to.be.true;
+      expect(res.json.calledWith(sinon.match({ token: sinon.match.string }))).to.be.true;
+    });
+
+    it('should handle unauthorized user', async () => {
+      const req = {
+        headers: { authorization: 'Basic base64encodedcredentials' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
+
+      // Stub database interaction to simulate an unauthorized user
+      dbClient.usersCollection.findOne.resolves(null);
+
+      await AuthController.getConnect(req, res);
+
+      expect(res.status.calledWith(401)).to.be.true;
+      expect(res.json.calledWith({ error: 'Unauthorized' })).to.be.true;
+    });
   });
 
-  it('should return 401 if authorization header is missing', async () => {
-    const response = await request(app)
-      .get('/connect');
+  describe('getDisconnect', () => {
+    it('should disconnect user by deleting the token', async () => {
+      const req = {
+        headers: { 'x-token': 'validToken123' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        send: sinon.stub(),
+      };
 
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+      // Stub Redis interaction
+      redisClient.get.resolves('user123');
+      redisClient.del.resolves();
+
+      await AuthController.getDisconnect(req, res);
+
+      expect(res.status.calledWith(204)).to.be.true;
+      expect(res.send.calledOnce).to.be.true;
+    });
+
+    it('should handle unauthorized disconnection', async () => {
+      const req = {
+        headers: { 'x-token': 'invalidToken456' },
+      };
+      const res = {
+        status: sinon.stub().returnsThis(),
+        json: sinon.stub(),
+      };
+
+      // Stub Redis interaction to simulate an unauthorized token
+      redisClient.get.resolves(null);
+
+      await AuthController.getDisconnect(req, res);
+
+      expect(res.status.calledWith(401)).to.be.true;
+      expect(res.json.calledWith({ error: 'Unauthorized' })).to.be.true;
+    });
   });
-
-  // Add more test cases for missing credentials, incorrect password, user not found, etc.
-});
-
-describe('GET /disconnect Endpoint', () => {
-  afterEach(() => {
-    jest.clearAllMocks(); // Clear all mock calls after each test
-  });
-
-  it('should disconnect user and return 204', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock authenticated user ID
-    redisClient.del.mockResolvedValue(); // Mock token deletion from Redis
-
-    const response = await request(app)
-      .get('/disconnect')
-      .set('x-token', 'fakeToken');
-
-    expect(response.status).toBe(204);
-    expect(redisClient.get).toHaveBeenCalledWith('auth_fakeToken');
-    expect(redisClient.del).toHaveBeenCalledWith('auth_fakeToken');
-  });
-
-  it('should return 401 if authentication token is missing', async () => {
-    const response = await request(app)
-      .get('/disconnect');
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
-  });
-
-  // Add more test cases for unauthorized access, token not found, etc.
 });

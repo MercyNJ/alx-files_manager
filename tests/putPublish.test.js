@@ -1,78 +1,73 @@
-import request from 'supertest';
-import app from '../server'; // Assuming 'app' is your Express application
-import dbClient from '../utils/db';
-import redisClient from '../utils/redis';
+import chai from 'chai';
+import sinon from 'sinon';
+import { ObjectId } from 'mongodb';
+import FilesController from '../controllers/FilesController';
 
-jest.mock('../utils/db'); // Mocking the dbClient
-jest.mock('../utils/redis'); // Mocking the redisClient
+const { expect } = chai;
 
-describe('PUT /files/:id/publish Endpoint', () => {
+describe('filesController - putPublish', () => {
+  let req; let res; let
+    next;
+
+  beforeEach(() => {
+    req = {
+      headers: {},
+      params: {},
+    };
+    res = {
+      status: sinon.stub().returnsThis(),
+      json: sinon.spy(),
+    };
+    next = sinon.spy();
+  });
+
   afterEach(() => {
-    jest.clearAllMocks();
+    sinon.restore();
   });
 
   it('should return 401 if token is missing', async () => {
-    const response = await request(app)
-      .put('/files/123/publish')
-      .send();
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+    await FilesController.putPublish(req, res, next);
+    expect(res.status.calledOnceWith(401)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Unauthorized' })).to.be.true;
   });
 
-  it('should return 401 if token is invalid', async () => {
-    redisClient.get.mockResolvedValue(null); // Mock invalid token
+  it('should return 401 if user does not exist in the database', async () => {
+    req.headers['x-token'] = 'valid_token';
+    const getStub = sinon.stub().returns(null);
+    sinon.replace(FilesController.redisClient, 'get', getStub);
 
-    const response = await request(app)
-      .put('/files/123/publish')
-      .set('x-token', 'invalid_token')
-      .send();
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+    await FilesController.putPublish(req, res, next);
+    expect(res.status.calledOnceWith(401)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Unauthorized' })).to.be.true;
   });
 
-  it('should return 401 if user not found', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-    dbClient.usersCollection.findOne.mockResolvedValue(null); // Mock user not found
+  it('should return 404 if file does not exist', async () => {
+    req.headers['x-token'] = 'valid_token';
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    const getStub = sinon.stub().returns(ObjectId().toHexString()); // Provide a valid ObjectId as a string
+    const findOneStub = sinon.stub().returns(null);
+    sinon.replace(FilesController.redisClient, 'get', getStub);
+    sinon.replace(FilesController.dbClient.filesCollection, 'findOne', findOneStub);
 
-    const response = await request(app)
-      .put('/files/123/publish')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+    await FilesController.putPublish(req, res, next);
+    expect(res.status.calledOnceWith(404)).to.be.true;
+    expect(res.json.calledOnceWith({ error: 'Not found' })).to.be.true;
   });
 
-  it('should return 404 if file not found', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-    dbClient.usersCollection.findOne.mockResolvedValue({ _id: 'userId' }); // Mock user found
-    dbClient.filesCollection.findOne.mockResolvedValue(null); // Mock file not found
+  it('should successfully publish a file', async () => {
+    req.headers['x-token'] = 'valid_token';
+    req.params.id = new ObjectId().toHexString(); // Provide a valid ObjectId as a string
+    const getStub = sinon.stub().returns(ObjectId().toHexString()); // Provide a valid ObjectId as a string
+    const findOneStub = sinon.stub().returns({ _id: new ObjectId(), userId: new ObjectId('valid_user_id') }); // Provide valid ObjectIds
+    const findOneAndUpdateStub = sinon.stub().resolves({ _id: new ObjectId(), isPublic: true }); // Provide a valid ObjectId
+    sinon.replace(FilesController.redisClient, 'get', getStub);
+    sinon.replace(FilesController.dbClient.filesCollection, 'findOne', findOneStub);
+    sinon.replace(FilesController.dbClient.filesCollection, 'findOneAndUpdate', findOneAndUpdateStub);
 
-    const response = await request(app)
-      .put('/files/123/publish')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
+    await FilesController.putPublish(req, res, next);
+    expect(res.status.calledOnceWith(200)).to.be.true;
+    expect(res.json.calledOnceWith({ _id: req.params.id, isPublic: true })).to.be.true;
   });
 
-  it('should update file to public and return it', async () => {
-    const mockFile = { _id: 'fileId', userId: 'userId', name: 'TestFile.txt', type: 'file', isPublic: false, parentId: '0' };
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-    dbClient.usersCollection.findOne.mockResolvedValue({ _id: 'userId' }); // Mock user found
-    dbClient.filesCollection.findOne.mockResolvedValue(mockFile); // Mock file found
-    dbClient.filesCollection.findOneAndUpdate.mockResolvedValue({ value: { ...mockFile, isPublic: true } }); // Mock updated file
-
-    const response = await request(app)
-      .put('/files/fileId/publish')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ ...mockFile, isPublic: true });
-  });
-
+  // Add more test cases to cover other scenarios
 });

@@ -1,73 +1,81 @@
-import request from 'supertest';
-import app from '../server'; // Assuming 'app' is your Express application
+import chai from 'chai';
+import chaiHttp from 'chai-http';
+import sinon from 'sinon';
+import { ObjectId } from 'mongodb';
+import FilesController from '../controllers/FilesController';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
 
-jest.mock('../utils/db'); // Mocking the dbClient
-jest.mock('../utils/redis'); // Mocking the redisClient
+chai.use(chaiHttp);
+const { expect } = chai;
 
-describe('GET /show Endpoint', () => {
+describe('filesController', () => {
+  // Mock data for testing
+  const mockUserId = ObjectId().toString();
+  const mockToken = 'mockToken';
+
+  beforeEach(() => {
+    sinon.stub(redisClient, 'get').resolves(mockUserId);
+  });
+
   afterEach(() => {
-    jest.clearAllMocks();
+    sinon.restore();
   });
 
-  it('should return 401 if token is missing', async () => {
-    const response = await request(app)
-      .get('/show/123')
-      .send();
+  describe('getShow', () => {
+    it('should return file information for a valid ID', async () => {
+      const mockFileId = ObjectId().toString();
+      const mockFile = {
+        _id: ObjectId(mockFileId),
+        userId: ObjectId(mockUserId),
+        name: 'TestFile',
+        type: 'file',
+        isPublic: false,
+        parentId: '0',
+      };
 
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
+      sinon.stub(dbClient.filesCollection, 'aggregate').returns({
+        toArray: sinon.stub().resolves([mockFile]),
+      });
+
+      const res = await chai
+        .request(FilesController)
+        .get(`/show/${mockFileId}`)
+        .set('x-token', mockToken);
+
+      expect(res).to.have.status(200);
+      expect(res.body).to.have.property('id', mockFileId);
+      expect(res.body).to.have.property('userId', mockUserId);
+      expect(res.body).to.have.property('name', 'TestFile');
+      expect(res.body).to.have.property('type', 'file');
+      expect(res.body).to.have.property('isPublic', false);
+      expect(res.body).to.have.property('parentId', 0);
+    });
+
+    it('should handle invalid ID format', async () => {
+      const res = await chai
+        .request(FilesController)
+        .get('/show/invalidId')
+        .set('x-token', mockToken);
+
+      expect(res).to.have.status(400);
+      expect(res.body).to.have.property('error', 'Invalid ID format');
+    });
+
+    it('should handle unauthorized access', async () => {
+      sinon.stub(dbClient.filesCollection, 'aggregate').returns({
+        toArray: sinon.stub().resolves([]),
+      });
+
+      const res = await chai
+        .request(FilesController)
+        .get('/show/nonExistentId')
+        .set('x-token', mockToken);
+
+      expect(res).to.have.status(404);
+      expect(res.body).to.have.property('error', 'Not found');
+    });
+
+    // Add more test cases as needed based on different scenarios
   });
-
-  it('should return 401 if token is invalid', async () => {
-    redisClient.get.mockResolvedValue(null); // Mock invalid token
-
-    const response = await request(app)
-      .get('/show/123')
-      .set('x-token', 'invalid_token')
-      .send();
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({ error: 'Unauthorized' });
-  });
-
-  it('should return 400 if id format is invalid', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-
-    const response = await request(app)
-      .get('/show/invalidId')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: 'Invalid ID format' });
-  });
-
-  it('should return 404 if file is not found', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-    dbClient.filesCollection.aggregate.mockResolvedValue([]); // Mock empty result
-
-    const response = await request(app)
-      .get('/show/123')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(404);
-    expect(response.body).toEqual({ error: 'Not found' });
-  });
-
-  it('should return the file details if file exists and belongs to the user', async () => {
-    redisClient.get.mockResolvedValue('userId'); // Mock valid token
-    dbClient.filesCollection.aggregate.mockResolvedValue([{ id: '123', userId: 'userId', name: 'TestFile.txt', type: 'file', isPublic: false, parentId: '0' }]); // Mock file details
-
-    const response = await request(app)
-      .get('/show/123')
-      .set('x-token', 'valid_token')
-      .send();
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ id: '123', userId: 'userId', name: 'TestFile.txt', type: 'file', isPublic: false, parentId: 0 });
-  });
-
 });

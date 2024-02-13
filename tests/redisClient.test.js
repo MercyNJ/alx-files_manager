@@ -1,7 +1,7 @@
-import redisClient from '../utils/redis';
 import { expect } from 'chai';
+import redisClient from '../utils/redis';
 
-describe('Redis Client', () => {
+describe('redis Client', () => {
   before(() => {
     // Assuming your Redis server is running before tests
   });
@@ -15,7 +15,6 @@ describe('Redis Client', () => {
     // Close the Redis connection after tests
     redisClient.client.quit();
   });
-
 
   it('should check if Redis is alive', async () => {
     const alive = await redisClient.isAlive();
